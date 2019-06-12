@@ -73,24 +73,27 @@ const errorCode = (code) => {
 //https://www.martin-brennan.com/nodejs-file-permissions-fstat/
 const modeLinux = (filepath) => {
 
-
-  
   const Correspondances = ['---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx'];
-  var  filename = path.parse(filepath).base || path.parse(filepath).root;
-  filename = wslpath(filename)
+  var  filename = path.basename(filepath);
+  if(filename == "" && filepath != "/") { //this is root
+    filename = filepath.toLowerCase().replace(':', '');
+  }
+
+  let user = 'ivs', group = 'ivs';
 
   try {
     const stats = fs.statSync(filepath);
     const unixFilePermissions = (stats.mode & parseInt('777', 8)).toString(8);
-    var result = stats.isDirectory() ? 'd' : '-'; 
+
+    var type = stats.isDirectory() ? 'd' : '-';
+    let mode = '';
     for (var i = 0; i < unixFilePermissions.length; i++)
-      result = result + Correspondances[unixFilePermissions.charAt(i)];
+      mode = mode + Correspondances[unixFilePermissions.charAt(i)];
+
     var date = Date(stats.atime).split(' ');
-    return {
-      filename,
-      longname :  `${result} 1 ivs ivs ${stats.size} ${date[1]} ${date[2]} ${date[3]} ${filename}`,
-      attrs: pick(stats, ['mode', 'uid', 'gid', 'size', 'atime', 'mtime'])
-    }
+    let longname = [type + mode, stats.nlink, user, group, stats.size, date[1], date[2], date[3], filename].join(' ');
+    let attrs = pick(stats, ['mode', 'uid', 'gid', 'size', 'atime', 'mtime']);
+    return {filename, longname, attrs};
   } catch(err) {
     logger.error(err.message);
     return {
@@ -100,8 +103,6 @@ const modeLinux = (filepath) => {
   }
 }
 
-
-const racine = ['D:/', 'C:/'];
 
 class SFTP {
 
