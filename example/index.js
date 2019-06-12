@@ -1,8 +1,8 @@
 "use strict";
 const debug     = require('debug');
-
+const fs = require('fs');
+const path = require('path');
 const {Server, Client, utils}  = require('ssh2');
-const pty       = require('node-pty');
 
 const sftp = require('../index.js');
 
@@ -54,8 +54,6 @@ class SFTPServer {
     client.on('ready', () => { //after auth
       client.on('session', (accept) => {
         let session = accept();
-        session.once('pty', this._clientPty.bind(this, session));
-        session.on('exec', this._clientExec.bind(this, session));
         session.on('sftp', this._clientSFTP.bind(this));
       });
     });
@@ -66,18 +64,6 @@ class SFTPServer {
   }
 
 
-  async _clientExec(session, accept, reject, info) {
-    logger.info(`Client wants to execute`, info.command);
-    var stream = accept();
-    let child = exec(info.command);
-    child.stderr.pipe(stream.stderr);
-    child.stdout.pipe(stream.stdout);
-    child.on('exit', (code) => {
-      stream.exit(code);
-      stream.end();
-    });
-  }
-
 
   _clientSFTP(accept, reject) {
     var sftpStream = accept();
@@ -85,27 +71,6 @@ class SFTPServer {
   }
 
 
-
-  _clientPty(session, accept, reject, info) {
-    logger.debug(`client asked for pty`);
-    accept();
-    let {rows, cols} = info;
-
-    session.once('shell', function(accept) {
-      logger.info(`client asked for a shell`);
-      let stream = accept();
-      let child = pty.spawn('cmd.exe', [], {name : 'xterm-color', cols, rows});
-      child.on('error', logger.error.bind(logger));
-      child.pipe(stream);
-      stream.pipe(child);
-
-      session.once('close', child.kill.bind(child));
-      session.on('window-change', (accept, reject, info) => {
-        logger.info(`Resize`, info);
-        child.resize(info.rows, info.cols);
-      });
-    });
-  }
 
 }
 
