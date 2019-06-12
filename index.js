@@ -14,14 +14,6 @@ var _getDisksList = async () => {
 }
 
 
-function wslpath(winpath) {
-console.log("Should resolve wslpath of", winpath);
-  let tmp = path.resolve(winpath); //win
-  var sepa = tmp.split(path.sep);
-  var newS = [sepa[0].toLowerCase().replace(":", ""), ...sepa.slice(1)];
-  var newP = "/" + path.posix.join(...newS);
-  return newP;
-}
 
 function pathRemoteToLocal(remotepath) {
   return winpath(remotepath);
@@ -31,19 +23,30 @@ function pathLocalToRemote(localpath) {
   return wslpath(localpath);
 }
 
+function wslpath(winpath) {
+  console.log("Should resolve wslpath of", winpath);
+  if(winpath == '/')
+    return '/';
+  let tmp = path.resolve(winpath); //win
+  console.log({tmp})
+  var sepa = tmp.split(path.sep);
+  var newS = [sepa[0].toLowerCase().replace(":", ""), ...sepa.slice(1)];
+  var newP = "/" + path.posix.join(...newS);
+  return newP;
+}
+
+
 function winpath(wslpath) {
-
-
-  if(!wslpath[0] == "/") //   foo/de/bar
+  wslpath = path.posix.normalize(wslpath)
+  if(!(wslpath[0] == "/")) //   foo/de/bar
     return path.normalize(wslpath); //  foo\de\bar
 
-  wslpath = stripStart(wslpath, "/mnt");
+  if(wslpath == '/')
+    return '/'
 
+  wslpath = stripStart(wslpath, "/mnt");
   var sepa = wslpath.split(path.posix.sep);
   var newS = [sepa[1].toUpperCase() + ':', ...sepa.slice(2)];
-   
-// [D:] -----> D:.
-
   var newP = newS.length > 1 ? path.win32.join(...newS) : newS[0] + '\\';
   return newP;
 }
@@ -69,8 +72,12 @@ const errorCode = (code) => {
 
 //https://www.martin-brennan.com/nodejs-file-permissions-fstat/
 const modeLinux = (filepath) => {
+
+
+  
   const Correspondances = ['---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx'];
-  const filename = path.parse(filepath).base || path.parse(filepath).root;
+  var  filename = path.parse(filepath).base || path.parse(filepath).root;
+  filename = wslpath(filename)
 
   try {
     const stats = fs.statSync(filepath);
@@ -99,7 +106,6 @@ const racine = ['D:/', 'C:/'];
 class SFTP {
 
   constructor(sftpStream) {
-    _getDisksList().then(console.log);
 
     this.openFiles = {};
     this._handleCount = 0;
@@ -148,7 +154,7 @@ class SFTP {
   }
 
   _realpath(reqid, filename) {
-    logger.info('realpath ', filename)
+    logger.info('realpath ', filename, pathRemoteToLocal(filename))
 
     //filename = path.posix.normalize(filename);
     filename = pathLocalToRemote(pathRemoteToLocal(filename));
@@ -217,18 +223,25 @@ class SFTP {
     this.sftpStream.status(reqid, SFTP_STATUS_CODE.OK);
   }
 
-  _readdir(reqid, handle){
+  async _readdir(reqid, handle) {
     if(this.openFiles[handle] && !this.openFiles[handle].opened) {
       logger.info('READDIR', this.openFiles[handle].filepath);
       var names = [];
 
-      names = fs.readdirSync(this.openFiles[handle].filepath)
+
+      if(this.openFiles[handle].filepath == '/') {
+        names = await _getDisksList();
+        names = names.map((v) => modeLinux(v));
+      }
+      else {
+        names = fs.readdirSync(this.openFiles[handle].filepath)
+        names = names.map((v) => modeLinux(path.join(this.openFiles[handle].filepath, v)));
+      }
    
-      var name = names.map((v) => modeLinux(path.join(this.openFiles[handle].filepath, v)));
 
     //  console.log(name[0])
       this.openFiles[handle].opened = true;
-      this.sftpStream.name(reqid, name)
+      this.sftpStream.name(reqid, names)
     } else {
       this.sftpStream.status(reqid, SFTP_STATUS_CODE.EOF);
     }
