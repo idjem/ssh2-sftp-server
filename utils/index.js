@@ -1,10 +1,10 @@
 "use strict";
 
-const path    = require('path');
-const execFile     = require('child_process').execFile;
+const path      = require('path');
+const execFile = require('child_process').execFile;
 
 
-const getDisksList = async () => {
+const getLogicalDisks = async () => {
   let logicaldisk = await new Promise((resolve, reject) => {
     execFile('wmic', ['logicaldisk', 'get', 'caption'], (err, body) => {
       if(err)
@@ -31,6 +31,7 @@ function winpath(wslpath) {
   wslpath = path.posix.normalize(wslpath);
   if(!(wslpath[0] == "/")) //   relative
     return path.normalize(wslpath); //  foo\de\bar
+
   if(wslpath == '/')
     return '/';
 
@@ -40,4 +41,4 @@ function winpath(wslpath) {
   return newP;
 }
 
-module.exports = {getDisksList, wslpath, winpath};
+module.exports = {getLogicalDisks, wslpath, winpath};

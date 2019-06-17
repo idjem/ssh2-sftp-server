@@ -102,7 +102,6 @@ class SFTP {
     */
   }
 
-
   _write(reqid, handle, offset, data) {
     //var state = this.openFiles[handle];
     fs.writeSync(handle[0], data, 0, data.length, offset);
