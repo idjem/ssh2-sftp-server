@@ -2,18 +2,17 @@
 
 const path    = require('path');
 const fs      = require('fs');
+
 const debug = require('debug');
-const stripStart = require('nyks/string/stripStart');
 
-const promisify = require('nyks/function/promisify');
-const spawn     = promisify(require('nyks/child_process/exec'));
+const strftime  = require('mout/date/strftime');
+const pick      = require('mout/object/pick');
 
-var _getDisksList = async () => {
-  var logicaldisk = await spawn('wmic', ['logicaldisk', 'get', 'caption']);
-  return logicaldisk.split("\n").map(l => l.trim()).splice(1).filter(Boolean);
-}
+const {getLogicalDisks, wslpath, winpath} = require('./utils/');
 
-
+//from stream scope
+var SFTP_OPEN_MODE, SFTP_STATUS_CODE;
+var flagsToString;
 
 function pathRemoteToLocal(remotepath) {
   return winpath(remotepath);
@@ -23,63 +22,32 @@ function pathLocalToRemote(localpath) {
   return wslpath(localpath);
 }
 
-function wslpath(winpath) {
-  console.log("Should resolve wslpath of", winpath);
-  if(winpath == '/')
-    return '/';
-  let tmp = path.resolve(winpath); //win
-  console.log({tmp})
-  var sepa = tmp.split(path.sep);
-  var newS = [sepa[0].toLowerCase().replace(":", ""), ...sepa.slice(1)];
-  var newP = "/" + path.posix.join(...newS);
-  return newP;
-}
-
-
-function winpath(wslpath) {
-  wslpath = path.posix.normalize(wslpath)
-  if(!(wslpath[0] == "/")) //   foo/de/bar
-    return path.normalize(wslpath); //  foo\de\bar
-
-  if(wslpath == '/')
-    return '/'
-
-  wslpath = stripStart(wslpath, "/mnt");
-  var sepa = wslpath.split(path.posix.sep);
-  var newS = [sepa[1].toUpperCase() + ':', ...sepa.slice(2)];
-  var newP = newS.length > 1 ? path.win32.join(...newS) : newS[0] + '\\';
-  return newP;
-}
 
 const logger = {
+  debug : debug('sftp:debug'),
   info  : debug('sftp:info'),
   error : debug('sftp:error')
 };
 
-const {SFTP_OPEN_MODE, SFTP_STATUS_CODE}  = require('ssh2');
-const {flagsToString} = require('ssh2-streams/lib/sftp');
-const pick      = require('mout/object/pick');
-const deleteFolderRecursive = require('nyks/fs/deleteFolderRecursive');
 
 const errorCode = (code) => {
   if(['ENOTEMPTY', 'ENOTDIR', 'ENOENT'].includes(code))
     return SFTP_STATUS_CODE.NO_SUCH_FILE;
   if(['EACCES', 'EEXIST', 'EISDIR'].includes(code))
     return SFTP_STATUS_CODE.PERMISSION_DENIED;
-  return SFTP_STATUS_CODE.FAILURE
-}
+  return SFTP_STATUS_CODE.FAILURE;
+};
 
 
-//https://www.martin-brennan.com/nodejs-file-permissions-fstat/
-const modeLinux = (filepath) => {
+const modeLinux = (filename, filepath) => {
 
   const Correspondances = ['---', '--x', '-w-', '-wx', 'r--', 'r-x', 'rw-', 'rwx'];
-  var  filename = path.basename(filepath);
+
   if(filename == "" && filepath != "/") { //this is root
     filename = filepath.toLowerCase().replace(':', '');
   }
 
-  let user = 'ivs', group = 'ivs';
+  let user = 'user', group = 'user', uid = 1000;
 
   try {
     const stats = fs.statSync(filepath);
@@ -87,26 +55,29 @@ const modeLinux = (filepath) => {
 
     var type = stats.isDirectory() ? 'd' : '-';
     let mode = '';
-    for (var i = 0; i < unixFilePermissions.length; i++)
+    for(let i = 0; i < unixFilePermissions.length; i++)
       mode = mode + Correspondances[unixFilePermissions.charAt(i)];
-
-    var date = Date(stats.atime).split(' ');
-    let longname = [type + mode, stats.nlink, user, group, stats.size, date[1], date[2], date[3], filename].join(' ');
+    var date = strftime(new Date(stats.mtime), "%b %d %H:%M");//Jun 16 14:41
+    let longname = [type + mode, stats.nlink, user, group, stats.size, date, filename].join(' ');
     let attrs = pick(stats, ['mode', 'uid', 'gid', 'size', 'atime', 'mtime']);
+    attrs.uid = attrs.gid = uid;
+
     return {filename, longname, attrs};
   } catch(err) {
     logger.error(err.message);
     return {
       filename,
       longname :  `?????????? ? ? ? ? ? ? ? ${filename}`
-    }
+    };
   }
-}
-
+};
 
 class SFTP {
 
   constructor(sftpStream) {
+
+    ({flagsToString} = sftpStream.constructor);
+    ({OPEN_MODE : SFTP_OPEN_MODE, STATUS_CODE : SFTP_STATUS_CODE} = sftpStream.constructor);
 
     this.openFiles = {};
     this._handleCount = 0;
@@ -116,61 +87,51 @@ class SFTP {
     sftpStream.on('CLOSE', this._close.bind(this));
     sftpStream.on('REALPATH', this._realpath.bind(this));
     sftpStream.on('STAT', this._onSTAT.bind(this, 'STAT'));
-    sftpStream.on('LSTAT', this._onSTAT.bind(this, 'LSTAT'));
-    sftpStream.on('FSTAT', (reqID, handle) => {
-      this._onSTAT('FSTAT', reqID, this.openFiles[handle].filepath, handle);
-    });
     sftpStream.on('OPENDIR', this._opendir.bind(this));
     sftpStream.on('READ', this._read.bind(this));
     sftpStream.on('REMOVE', this._remove.bind(this));
     sftpStream.on('RMDIR', this._rmdir.bind(this));
     sftpStream.on('MKDIR', this._mkdir.bind(this));
-    sftpStream.on('RENAME', () => {});
+    sftpStream.on('RENAME', this._rename.bind(this));
     sftpStream.on('READDIR', this._readdir.bind(this));
     sftpStream.on('WRITE', this._write.bind(this));
+    /*    sftpStream.on('LSTAT', this._onSTAT.bind(this, 'LSTAT'));
+        sftpStream.on('FSTAT', (reqID, handle) => {
+          this._onSTAT('FSTAT', reqID, this.openFiles[handle].filepath, handle);
+        });
+    */
   }
 
-  fetchhandle() {
-    var prevhandle;
-    prevhandle = this._handleCount;
-    this._handleCount++;
-    return new Buffer(prevhandle.toString());
-  }
 
   _write(reqid, handle, offset, data) {
-    var buffer = new Buffer(data);
-    var state = this.openFiles[handle];
-    if(state.readed)
-      return sftpStream.status(reqid, SFTP_STATUS_CODE.EOF);
-    else {
-      const fd = fs.openSync(state.filepath, "w");
-      fs.writeSync(fd, buffer, 0, buffer.length, offset)
-      state.read = true;
-      console.log('write to file at offset %d, length %d', offset, buffer.length);
-    }
+    //var state = this.openFiles[handle];
+    fs.writeSync(handle[0], data, 0, data.length, offset);
+    logger.debug('write to file at offset %d, length %d', offset, data.length);
+    this.sftpStream.status(reqid, SFTP_STATUS_CODE.OK);
   }
 
-  _close() {
-    logger.info('CLOSE')
+  _close(reqid, fd) {
+    fs.closeSync(fd[0]);
+    logger.info('CLOSE', {reqid, fd});
+    this.sftpStream.status(reqid, SFTP_STATUS_CODE.OK);
   }
 
   _realpath(reqid, filename) {
-    logger.info('realpath ', filename, pathRemoteToLocal(filename))
+    logger.info('realpath ', filename, pathRemoteToLocal(filename));
 
     //filename = path.posix.normalize(filename);
     filename = pathLocalToRemote(pathRemoteToLocal(filename));
-    logger.info('REALPATH normalize ', filename)
-
+    logger.info('REALPATH normalize ', filename);
     this.sftpStream.name(reqid, [{filename}]);
   }
 
-  _onSTAT(statType, reqid, filepath, handle) {
-    filepath = pathRemoteToLocal(filepath);
-
+  _onSTAT(statType, reqid, remotepath, handle) {
+    let filepath = pathRemoteToLocal(remotepath);
+    logger.info('STAT', {filepath, remotepath, statType, handle});
     try {
-      logger.info({statType})
-      logger.info('STAT', filepath);
-      var stats = pick(fs.statSync(filepath), ['mode', 'uid', 'gid', 'size', 'atime', 'mtime']);
+      var fstats = fs.statSync(filepath);
+      let stats = pick(fstats, ['mode', 'uid', 'gid', 'size', 'atime', 'mtime']);
+
       if(handle && this.openFiles[handle])
         this.openFiles[handle].stats = stats;
       return this.sftpStream.attrs(reqid, stats);
@@ -180,81 +141,108 @@ class SFTP {
     }
   }
 
-  _opendir(reqid, filepath) {
-    var handle = this.fetchhandle();
-    filepath = pathRemoteToLocal(filepath);
+  _opendir(reqid, remotepath) {
 
-    logger.info('OPENDIR', filepath);
+    let filepath = pathRemoteToLocal(remotepath);
+    logger.info('OPENDIR', {reqid, filepath, remotepath});
 
-    this.openFiles[handle] = { opened : false , filepath};
-    this.sftpStream.handle(reqid, handle);
+    try {
+      let stat = fs.statSync(filepath);
+      if(!stat.isDirectory()) {
+        this.sftpStream.status(reqid, SFTP_STATUS_CODE.FAILURE);
+        return;
+      }
+    } catch(err) {
+      this.sftpStream.status(reqid, SFTP_STATUS_CODE.NO_SUCH_FILE);
+      return;
+    }
+
+    return this._open(reqid, remotepath, SFTP_OPEN_MODE.READ);
   }
+
 
   _read(reqid, handle, offset, length) {
-    logger.info('READ', offset, length);
+    logger.debug('READ', {reqid, offset, length});
     var state = this.openFiles[handle];
 
-    if(offset > state.stats.size)
+    if(offset >= state.stat.size)
       return this.sftpStream.status(reqid, SFTP_STATUS_CODE.EOF);
 
-    const fd = fs.openSync(state.filepath, "r");
-    var d = state.stats.size - state.readed > length ? length : state.stats.size - state.readed;
-    var buffer = new Buffer(d);
-    fs.readSync(fd, buffer, 0, d, offset);
-    state.readed = state.readed + d;
+    var size = state.stat.size - state.pos > length ? length : state.stat.size - state.pos;
+    var buffer = new Buffer(size);
+
+    fs.readSync(handle[0], buffer, 0, size, offset);
+    state.pos += size;
+
     this.sftpStream.data(reqid, buffer);
-    logger.info('Read from file at offset %d, length %d', offset, d);
-    
   }
 
-  _remove(reqid, filepath) {
-    logger.info('REMOVE', filepath);
+
+  _rename(reqid, remotepath, newremotePath) {
+    let filepath = pathRemoteToLocal(remotepath);
+    let newfilepath = pathRemoteToLocal(newremotePath);
+    logger.info('RENAME', {filepath, remotepath, newfilepath, newremotePath});
+    fs.renameSync(filepath, newfilepath);
+    this.sftpStream.status(reqid, SFTP_STATUS_CODE.OK);
+  }
+
+
+  _remove(reqid, remotepath) {
+    let filepath = pathRemoteToLocal(remotepath);
+    logger.info('REMOVE', {filepath, remotepath});
     fs.unlinkSync(filepath);
     this.sftpStream.status(reqid, SFTP_STATUS_CODE.OK);
   }
 
-  _rmdir(reqid, filepath){
-    logger.info('RMDIR', filepath);
-    deleteFolderRecursive(filepath);
+  _rmdir(reqid, remotepath) {
+    let filepath = pathRemoteToLocal(remotepath);
+    logger.info('RMDIR', {filepath, remotepath});
+    fs.rmdirSync(filepath);
     this.sftpStream.status(reqid, SFTP_STATUS_CODE.OK);
   }
 
-  _mkdir(reqid, filepath, attrs) {
+  _mkdir(reqid, remotepath /*, attrs*/) {
+    let filepath = pathRemoteToLocal(remotepath);
     fs.mkdirSync(filepath);
     this.sftpStream.status(reqid, SFTP_STATUS_CODE.OK);
   }
 
+
   async _readdir(reqid, handle) {
-    if(this.openFiles[handle] && !this.openFiles[handle].opened) {
-      logger.info('READDIR', this.openFiles[handle].filepath);
-      var names = [];
-
-
-      if(this.openFiles[handle].filepath == '/') {
-        names = await _getDisksList();
-        names = names.map((v) => modeLinux(v));
-      }
-      else {
-        names = fs.readdirSync(this.openFiles[handle].filepath)
-        names = names.map((v) => modeLinux(path.join(this.openFiles[handle].filepath, v)));
-      }
-   
-
-    //  console.log(name[0])
-      this.openFiles[handle].opened = true;
-      this.sftpStream.name(reqid, names)
-    } else {
+    logger.info('READDIR', this.openFiles[handle].filepath);
+    if(this.openFiles[handle].closed) {
       this.sftpStream.status(reqid, SFTP_STATUS_CODE.EOF);
+      return;
     }
+
+    var names = [];
+
+    if(this.openFiles[handle].filepath == '/') {
+      names = await getLogicalDisks();
+      names = names.map((v) => modeLinux("", v));
+    } else {
+      names = fs.readdirSync(this.openFiles[handle].filepath);
+      names.push('.', '..');
+      names = names.map((v) => modeLinux(v, path.join(this.openFiles[handle].filepath, v)));
+    }
+    this.openFiles[handle].closed = true;
+    this.sftpStream.name(reqid, names);
   }
 
   _open(reqid, filepath, flags, attrs) {
-    var handle = this.fetchhandle();
+    filepath = pathRemoteToLocal(filepath);
     flags  = flagsToString(flags);
-    this.openFiles[handle] = { readed : 0 , filepath, flags};
+
+    logger.info('OPEN', {reqid, filepath, flags, attrs});
+    if(flags != "w" && !fs.existsSync(filepath))
+      return this.sftpStream.status(reqid, SFTP_STATUS_CODE.NO_SUCH_FILE);
+
+    var handle = fs.openSync(filepath, flags);
+    let stat = fs.statSync(filepath);
+    handle = Buffer.from([handle]);
+    this.openFiles[handle] = {filepath, flags, stat, pos : 0};
     return this.sftpStream.handle(reqid, handle);
   }
-  
 }
 
 

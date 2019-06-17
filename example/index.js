@@ -1,37 +1,27 @@
 "use strict";
-const debug     = require('debug');
-const fs = require('fs');
-const path = require('path');
-const {Server, Client, utils}  = require('ssh2');
 
-const sftp = require('../index.js');
+const path = require('path');
+const fs   = require('fs');
+
+const {Server}  = require('ssh2');
+const debug     = require('debug');
+
+const SftpServer = require('../index.js');
 
 const logger =  {
-  info  : debug('tunnel:info'),
-  debug : debug('tunnel:debug'),
-  error : debug('tunnel:error'),
+  info  : debug('sftp:example:info'),
+  debug : debug('sftp:example:debug'),
+  error : debug('sftp:example:error'),
 };
 
-
-
-class SFTPServer {
+class Test {
 
   constructor() {
-
     this.hostKey = fs.readFileSync(path.resolve(__dirname, 'server.rsa'));
     this.port    = 2222;
-
   }
 
-
-  async run() {
-    logger.info(`ivs-device ready with`, this.device_key);
-    const localServer = await this.startLocalSSHServer();
-
-  }
-
-
-  startLocalSSHServer() {
+  run() {
     let server = new Server({
       hostKeys : [this.hostKey]
     }, this._newClient.bind(this));
@@ -43,7 +33,6 @@ class SFTPServer {
       });
     });
   }
-  
 
   _newClient(client) {
     logger.info(`new client connecting`);
@@ -65,16 +54,12 @@ class SFTPServer {
     });
   }
 
-
-
-  _clientSFTP(accept, reject) {
+  _clientSFTP(accept/*, reject*/) {
     var sftpStream = accept();
-    new sftp(sftpStream);
+    new SftpServer(sftpStream);
   }
-
-
 
 }
 
-module.exports = SFTPServer;
+module.exports = Test;
 

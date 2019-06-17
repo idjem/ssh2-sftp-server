@@ -5,8 +5,9 @@
   "main": "sftp.js",
   "scripts": {
     "preversion": "npm run checkall",
-    "eslint": "eslint index.js",
+    "eslint": "eslint .",
     "checkall": "npm run eslint",
+    "test" : "npm run eslint",
     "mocha": "node node_modules/mocha/bin/_mocha",
     "cover": "nyc --temp-directory coverage/.nyc_output --reporter text-summary --reporter html --reporter lcov  mocha",
     "coveralls": "npm install coveralls && node ./node_modules/coveralls/bin/coveralls.js < ./coverage/lcov.info"
@@ -23,8 +24,6 @@
   },
   "dependencies": {
     "debug": "^4.1.1",
-    "mout": "^1.1.0",
-    "nyks": "^5.12.3",
-    "ssh2-streams": "^0.4.4"
+    "mout": "^1.1.0"
   }
 }
