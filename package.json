@@ -1,6 +1,6 @@
 {
   "name": "ssh2-sftp-server",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "SSH2 sftp server",
   "main": "sftp.js",
   "scripts": {
