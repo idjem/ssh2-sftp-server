@@ -2,3 +2,4 @@
 /node_modules
 /coverage
 /disc
+.nyc_output/
