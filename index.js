@@ -86,7 +86,7 @@ class SFTP {
     sftpStream.on('OPEN', this._open.bind(this));
     sftpStream.on('CLOSE', this._close.bind(this));
     sftpStream.on('REALPATH', this._realpath.bind(this));
-    sftpStream.on('STAT', this._onSTAT.bind(this, 'STAT'));
+    sftpStream.on('STAT', this._onSTAT.bind(this, 'statSync'));
     sftpStream.on('OPENDIR', this._opendir.bind(this));
     sftpStream.on('READ', this._read.bind(this));
     sftpStream.on('REMOVE', this._remove.bind(this));
@@ -95,11 +95,10 @@ class SFTP {
     sftpStream.on('RENAME', this._rename.bind(this));
     sftpStream.on('READDIR', this._readdir.bind(this));
     sftpStream.on('WRITE', this._write.bind(this));
-    /*    sftpStream.on('LSTAT', this._onSTAT.bind(this, 'LSTAT'));
-        sftpStream.on('FSTAT', (reqID, handle) => {
-          this._onSTAT('FSTAT', reqID, this.openFiles[handle].filepath, handle);
-        });
-    */
+    sftpStream.on('LSTAT', this._onSTAT.bind(this, 'lstatSync'));
+    sftpStream.on('FSTAT', (reqID, handle) => {
+      this._onSTAT('fstatSync', reqID, this.openFiles[handle].filepath, handle);
+    });
   }
 
   _write(reqid, handle, offset, data) {
@@ -128,7 +127,7 @@ class SFTP {
     let filepath = pathRemoteToLocal(remotepath);
     logger.info('STAT', {filepath, remotepath, statType, handle});
     try {
-      var fstats = fs.statSync(filepath);
+      var fstats = fs[statType](filepath);
       let stats = pick(fstats, ['mode', 'uid', 'gid', 'size', 'atime', 'mtime']);
 
       if(handle && this.openFiles[handle])
