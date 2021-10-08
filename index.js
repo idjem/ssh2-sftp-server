@@ -92,6 +92,9 @@ class SFTP {
     sftpStream.on('READDIR', this._readdir.bind(this));
     sftpStream.on('WRITE', this._write.bind(this));
     sftpStream.on('LSTAT', this._onSTAT.bind(this, 'lstatSync'));
+
+    sftpStream.on('SETSTAT', this._onSetSTAT.bind(this));
+
     sftpStream.on('FSTAT', (reqID, handle) => {
       this._onSTAT('fstatSync', reqID, this.openFiles[handle].filepath, handle);
     });
@@ -117,6 +120,11 @@ class SFTP {
     filename = pathLocalToRemote(pathRemoteToLocal(filename));
     logger.info('REALPATH normalize ', filename);
     this.sftpStream.name(reqid, [{filename}]);
+  }
+
+  _onSetSTAT(reqid, filepath, stats) {
+    logger.info('setStats ', reqid, filepath);
+    this.sftpStream.status(reqid, SFTP_STATUS_CODE.OK);
   }
 
   _onSTAT(statType, reqid, remotepath, handle) {
