@@ -11,8 +11,7 @@ const pick      = require('mout/object/pick');
 const {getLogicalDisks, wslpath, winpath} = require('./utils/');
 
 //from stream scope
-var SFTP_OPEN_MODE, SFTP_STATUS_CODE;
-var flagsToString;
+const {OPEN_MODE : SFTP_OPEN_MODE, STATUS_CODE : SFTP_STATUS_CODE, flagsToString} = require('ssh2').utils.sftp;
 
 function pathRemoteToLocal(remotepath) {
   return winpath(remotepath);
@@ -75,9 +74,6 @@ const modeLinux = (filename, filepath) => {
 class SFTP {
 
   constructor(sftpStream) {
-
-    ({flagsToString} = sftpStream.constructor);
-    ({OPEN_MODE : SFTP_OPEN_MODE, STATUS_CODE : SFTP_STATUS_CODE} = sftpStream.constructor);
 
     this.openFiles = {};
     this._handleCount = 0;
